@@ -1,0 +1,61 @@
+name: Stella Cinis Discord
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+
+  workflow_dispatch:
+    inputs:
+      test_discord:
+        description: "Envoyer une notification Discord de test"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stella-cinis-discord
+  cancel-in-progress: false
+
+jobs:
+  check-forum:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Télécharger le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer les dépendances
+        run: npm install
+
+      - name: Vérifier Stella Cinis
+        env:
+          DISCORD_WEBHOOK_FICHES: ${{ secrets.DISCORD_WEBHOOK_FICHES }}
+          DISCORD_WEBHOOK_IDEES: ${{ secrets.DISCORD_WEBHOOK_IDEES }}
+          DISCORD_WEBHOOK_MODERATION: ${{ secrets.DISCORD_WEBHOOK_MODERATION }}
+          DISCORD_WEBHOOK_QUESTIONS: ${{ secrets.DISCORD_WEBHOOK_QUESTIONS }}
+          DISCORD_WEBHOOK_BUGS: ${{ secrets.DISCORD_WEBHOOK_BUGS }}
+          TEST_NOTIFICATION: ${{ inputs.test_discord && '1' || '0' }}
+        run: node check-forum.js
+
+      - name: Sauvegarder le nouvel état
+        run: |
+          git config user.name "Stella Cinis Bot"
+          git config user.email "stella-cinis-bot@users.noreply.github.com"
+
+          git add state.json
+
+          if git diff --cached --quiet; then
+            echo "Aucun changement."
+          else
+            git commit -m "Update Stella Cinis notification state"
+            git push
+          fi
