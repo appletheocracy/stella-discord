@@ -1,0 +1,2 @@
+# stella-discord
+Webhooks
