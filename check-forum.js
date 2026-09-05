@@ -2,13 +2,50 @@ import * as cheerio from 'cheerio';
 import fs from 'node:fs/promises';
 
 const CONFIG = {
-    forumId: 23,
-    forumUrl: 'https://stellacinis.jcink.net/index.php?showforum=23',
-    baseUrl: 'https://stellacinis.jcink.net',
-    stateFile: './state.json'
-};
 
-const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+    baseUrl: 'https://stellacinis.jcink.net',
+
+    stateFile: './state.json',
+
+    forums: [
+
+        {
+            id: 10,
+            name: 'Fiches',
+            webhook: process.env.DISCORD_WEBHOOK_FICHES
+        },
+
+        {
+            id: 23,
+            name: 'Idées de persos',
+            webhook: process.env.DISCORD_WEBHOOK_IDEES
+        },
+
+        {
+            id: 7,
+            name: 'Modération',
+            webhook: process.env.DISCORD_WEBHOOK_MODERATION
+        },
+
+        {
+            id: 6,
+            name: 'Questions & Suggestions',
+            webhook: process.env.DISCORD_WEBHOOK_QUESTIONS
+        }
+
+    ],
+
+    topics: [
+
+        {
+            id: 47,
+            name: 'Bugs',
+            webhook: process.env.DISCORD_WEBHOOK_BUGS
+        }
+
+    ]
+
+};
 
 if (!webhookUrl) {
     throw new Error(
