@@ -2,75 +2,56 @@ import * as cheerio from 'cheerio';
 import fs from 'node:fs/promises';
 
 const CONFIG = {
-
     baseUrl: 'https://stellacinis.jcink.net',
-
     stateFile: './state.json',
 
     forums: [
-
         {
             id: 10,
             name: 'Fiches',
             webhook: process.env.DISCORD_WEBHOOK_FICHES
         },
-
         {
             id: 23,
             name: 'Idées de persos',
             webhook: process.env.DISCORD_WEBHOOK_IDEES
         },
-
         {
             id: 7,
             name: 'Modération',
             webhook: process.env.DISCORD_WEBHOOK_MODERATION
         },
-
         {
             id: 6,
             name: 'Questions & Suggestions',
             webhook: process.env.DISCORD_WEBHOOK_QUESTIONS
         }
-
     ],
 
     topics: [
-
         {
             id: 47,
             name: 'Bugs',
             webhook: process.env.DISCORD_WEBHOOK_BUGS
         }
-
     ]
-
 };
 
-if (!webhookUrl) {
-    throw new Error(
-        'Le secret GitHub DISCORD_WEBHOOK_URL est absent.'
-    );
-}
 
 /* =========================================================
    OUTILS
 ========================================================= */
 
-function absoluteUrl(url) {
-    return new URL(url, CONFIG.baseUrl).href;
+function cleanText(text) {
+    return String(text || '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 
 function extractTopicId(url) {
-
     try {
-
-        const parsed = new URL(
-            url,
-            CONFIG.baseUrl
-        );
-
+        const parsed = new URL(url, CONFIG.baseUrl);
         const id = parsed.searchParams.get('showtopic');
 
         return id
@@ -78,53 +59,86 @@ function extractTopicId(url) {
             : null;
 
     } catch {
-
         return null;
-
     }
-
 }
 
 
-function cleanText(text) {
+function forumUrl(id) {
+    return `${CONFIG.baseUrl}/index.php?showforum=${id}`;
+}
 
-    return String(text || '')
-        .replace(/\s+/g, ' ')
-        .trim();
 
+function topicUrl(id) {
+    return `${CONFIG.baseUrl}/index.php?showtopic=${id}`;
+}
+
+
+function postUrl(topicId, pid) {
+    return (
+        `${CONFIG.baseUrl}/index.php?showtopic=${topicId}` +
+        `&view=findpost&p=${pid}`
+    );
 }
 
 
 async function fetchHtml(url) {
-
     console.log('GET', url);
 
     const response = await fetch(url, {
-
         redirect: 'follow',
 
         headers: {
             'User-Agent':
                 'Mozilla/5.0 Stella-Cinis-Discord-Notifier/1.0',
+
             'Accept':
                 'text/html,application/xhtml+xml'
         }
-
     });
 
     if (!response.ok) {
-
         throw new Error(
             `Erreur HTTP ${response.status} pour ${url}`
         );
-
     }
 
     return {
         html: await response.text(),
         finalUrl: response.url
     };
+}
 
+
+/* =========================================================
+   VALIDATION WEBHOOKS
+========================================================= */
+
+function validateWebhooks() {
+    const missing = [];
+
+    for (const forum of CONFIG.forums) {
+        if (!forum.webhook) {
+            missing.push(
+                `DISCORD_WEBHOOK_${forum.name}`
+            );
+        }
+    }
+
+    for (const topic of CONFIG.topics) {
+        if (!topic.webhook) {
+            missing.push(
+                `Webhook pour ${topic.name}`
+            );
+        }
+    }
+
+    if (missing.length) {
+        throw new Error(
+            'Un ou plusieurs webhooks sont absents : ' +
+            missing.join(', ')
+        );
+    }
 }
 
 
@@ -132,10 +146,14 @@ async function fetchHtml(url) {
    DISCORD
 ========================================================= */
 
-async function sendDiscord(embed) {
+async function sendDiscord(webhookUrl, embed) {
+    if (!webhookUrl) {
+        throw new Error(
+            'Webhook Discord manquant.'
+        );
+    }
 
     const response = await fetch(webhookUrl, {
-
         method: 'POST',
 
         headers: {
@@ -146,149 +164,162 @@ async function sendDiscord(embed) {
             username: 'Stella Cinis',
             embeds: [embed]
         })
-
     });
 
     if (!response.ok) {
-
-        const body = await response.text();
+        const body =
+            await response.text();
 
         throw new Error(
             `Discord ${response.status}: ${body}`
         );
-
     }
-
 }
 
 
-async function sendNewTopic(topic, latestPost) {
+async function sendTestNotification(target) {
+    await sendDiscord(
+        target.webhook,
+        {
+            title: '✅ Stella Cinis connecté',
 
-    await sendDiscord({
+            description:
+                `Le webhook **${target.name}** fonctionne correctement.`,
 
-        title: '✨ Nouveau sujet',
+            url:
+                target.type === 'forum'
+                    ? forumUrl(target.id)
+                    : topicUrl(target.id),
 
-        description:
-            `**${topic.title}**`,
-
-        url:
-            `${CONFIG.baseUrl}/index.php?showtopic=${topic.id}`,
-
-        fields: [
-
-            {
-                name: 'Auteur',
-                value:
-                    latestPost?.author ||
-                    'Inconnu',
-                inline: true
+            footer: {
+                text:
+                    `Surveillance : ${target.name}`
             },
 
-            {
-                name: 'Forum',
-                value:
-                    'Forum 23',
-                inline: true
-            }
+            timestamp:
+                new Date().toISOString()
+        }
+    );
+}
 
-        ],
 
-        footer: {
-            text: 'Stella Cinis'
-        },
+async function sendNewTopic(
+    forum,
+    topic,
+    latestPost
+) {
+    await sendDiscord(
+        forum.webhook,
+        {
+            title: '✨ Nouveau sujet',
 
-        timestamp:
-            new Date().toISOString()
+            description:
+                `**${topic.title}**`,
 
-    });
+            url:
+                topicUrl(topic.id),
 
+            fields: [
+                {
+                    name: 'Auteur',
+                    value:
+                        latestPost?.author ||
+                        'Inconnu',
+                    inline: true
+                },
+                {
+                    name: 'Section',
+                    value:
+                        forum.name,
+                    inline: true
+                }
+            ],
+
+            footer: {
+                text: 'Stella Cinis'
+            },
+
+            timestamp:
+                new Date().toISOString()
+        }
+    );
 }
 
 
 async function sendNewReply(
+    destination,
     topic,
     post
 ) {
+    await sendDiscord(
+        destination.webhook,
+        {
+            title: '💬 Nouvelle réponse',
 
-    const postUrl =
-        `${CONFIG.baseUrl}/index.php?showtopic=${topic.id}` +
-        `&view=findpost&p=${post.pid}`;
+            description:
+                `**${topic.title}**`,
 
-    await sendDiscord({
+            url:
+                postUrl(
+                    topic.id,
+                    post.pid
+                ),
 
-        title: '💬 Nouvelle réponse',
+            fields: [
+                {
+                    name: 'Auteur',
+                    value:
+                        post.author ||
+                        'Inconnu',
+                    inline: true
+                },
+                {
+                    name: 'Section',
+                    value:
+                        destination.name,
+                    inline: true
+                }
+            ],
 
-        description:
-            `**${topic.title}**`,
-
-        url:
-            postUrl,
-
-        fields: [
-
-            {
-                name: 'Auteur',
-                value:
-                    post.author ||
-                    'Inconnu',
-                inline: true
+            footer: {
+                text:
+                    `PID ${post.pid}`
             },
 
-            {
-                name: 'Forum',
-                value:
-                    'Forum 23',
-                inline: true
-            }
-
-        ],
-
-        footer: {
-            text:
-                `PID ${post.pid}`
-        },
-
-        timestamp:
-            new Date().toISOString()
-
-    });
-
+            timestamp:
+                new Date().toISOString()
+        }
+    );
 }
 
 
 /* =========================================================
-   LIRE LES TOPICS DU FORUM
+   LIRE LES TOPICS D'UN FORUM
 ========================================================= */
 
-async function getForumTopics() {
-
+async function getForumTopics(forum) {
     const {
         html
     } = await fetchHtml(
-        CONFIG.forumUrl
+        forumUrl(forum.id)
     );
 
-    const $ = cheerio.load(html);
-
-    /*
-     * Tu m'avais indiqué #innerwrapper.
-     * On limite donc volontairement la recherche
-     * à cet endroit.
-     */
+    const $ =
+        cheerio.load(html);
 
     const $wrapper =
         $('#innerwrapper').length
             ? $('#innerwrapper')
             : $('body');
 
-    const topics = new Map();
-
+    const topics =
+        new Map();
 
     $wrapper
         .find('a[href*="showtopic="]')
         .each(function () {
-
-            const $link = $(this);
+            const $link =
+                $(this);
 
             const href =
                 $link.attr('href');
@@ -304,39 +335,24 @@ async function getForumTopics() {
                 return;
             }
 
-
             let title =
                 cleanText(
                     $link.attr('title')
                 );
 
-
             if (!title) {
-
                 title =
                     cleanText(
                         $link.text()
                     );
-
             }
-
-
-            /*
-             * Certains liens Jcink pointent vers
-             * "getnewpost", "getlastpost", etc.
-             * On garde quand même le topic,
-             * mais on privilégie plus tard le
-             * meilleur titre trouvé.
-             */
 
             const specialLink =
                 /(?:view=|p=|st=)/i.test(
                     href
                 );
 
-
             if (!topics.has(topicId)) {
-
                 topics.set(
                     topicId,
                     {
@@ -350,104 +366,67 @@ async function getForumTopics() {
                 );
 
                 return;
-
             }
-
 
             const existing =
                 topics.get(topicId);
-
-
-            /*
-             * Si le premier lien était un lien
-             * "dernier message" et qu'on trouve
-             * ensuite le véritable lien du titre,
-             * on remplace le titre.
-             */
 
             if (
                 existing.special &&
                 !specialLink &&
                 title
             ) {
-
                 existing.title =
                     title;
 
                 existing.special =
                     false;
-
             }
-
         });
-
 
     return [
         ...topics.values()
     ];
-
 }
 
 
 /* =========================================================
-   ANALYSER UN TOPIC JCINK
+   ANALYSER UN POST
 ========================================================= */
 
 function getPostData(
     $,
     pid
 ) {
-
     let $post =
         $(`#pid_${pid}`);
 
-
-    /*
-     * Jcink utilise également historiquement :
-     *
-     * <a name="entry123"></a>
-     *
-     * On garde donc un fallback.
-     */
-
     if (!$post.length) {
-
         const $entry =
             $(`a[name="entry${pid}"]`);
 
         if ($entry.length) {
-
             $post =
                 $entry.closest(
                     'table, .tableborder, article, div'
                 );
-
         }
-
     }
 
-
-    let author = 'Inconnu';
-
+    let author =
+        'Inconnu';
 
     if ($post.length) {
-
         const selectors = [
-
             '.normalname a[href*="showuser="]',
-
             'a[href*="showuser="] .normalname',
-
             'a[href*="showuser="]'
-
         ];
-
 
         for (
             const selector
             of selectors
         ) {
-
             const found =
                 cleanText(
                     $post
@@ -456,43 +435,32 @@ function getPostData(
                         .text()
                 );
 
-
             if (found) {
-
-                author = found;
+                author =
+                    found;
 
                 break;
-
             }
-
         }
-
     }
-
 
     return {
         pid,
         author
     };
-
 }
 
 
-function extractPostIds($) {
+/* =========================================================
+   EXTRAIRE LES PID
+========================================================= */
 
+function extractPostIds($) {
     const ids =
         new Set();
 
-
-    /*
-     * Stella/Jcink :
-     *
-     * id="pid_123"
-     */
-
     $('[id^="pid_"]').each(
         function () {
-
             const id =
                 $(this)
                     .attr('id')
@@ -501,26 +469,15 @@ function extractPostIds($) {
                     );
 
             if (id) {
-
                 ids.add(
                     Number(id[1])
                 );
-
             }
-
         }
     );
 
-
-    /*
-     * Ancienne structure Jcink :
-     *
-     * name="entry123"
-     */
-
     $('a[name^="entry"]').each(
         function () {
-
             const name =
                 $(this)
                     .attr('name')
@@ -529,26 +486,15 @@ function extractPostIds($) {
                     );
 
             if (name) {
-
                 ids.add(
                     Number(name[1])
                 );
-
             }
-
         }
     );
 
-
-    /*
-     * Autre fallback :
-     *
-     * &p=123
-     */
-
     $('a[href*="p="]').each(
         function () {
-
             const href =
                 $(this)
                     .attr('href');
@@ -557,9 +503,7 @@ function extractPostIds($) {
                 return;
             }
 
-
             try {
-
                 const parsed =
                     new URL(
                         href,
@@ -574,20 +518,16 @@ function extractPostIds($) {
                     p &&
                     /^\d+$/.test(p)
                 ) {
-
                     ids.add(
                         Number(p)
                     );
-
                 }
 
             } catch {
                 // rien
             }
-
         }
     );
-
 
     return [
         ...ids
@@ -595,23 +535,17 @@ function extractPostIds($) {
         (a, b) =>
             a - b
     );
-
 }
 
 
-async function inspectTopic(
-    topic
-) {
+/* =========================================================
+   ANALYSER UN TOPIC
+========================================================= */
 
-    /*
-     * getlastpost demande directement
-     * la dernière page du sujet.
-     */
-
+async function inspectTopic(topic) {
     const url =
-        `${CONFIG.baseUrl}/index.php?showtopic=${topic.id}` +
+        `${topicUrl(topic.id)}` +
         '&view=getlastpost';
-
 
     const {
         html,
@@ -619,68 +553,13 @@ async function inspectTopic(
     } =
         await fetchHtml(url);
 
-
     const $ =
         cheerio.load(html);
-
-
-    /*
-     * Vérification supplémentaire :
-     * on s'assure que le topic appartient
-     * réellement au forum 23.
-     */
-
-    const replyLink =
-        $(
-            `a[href*="act=Post"][href*="CODE=02"]`
-        )
-            .first()
-            .attr('href');
-
-
-    if (replyLink) {
-
-        try {
-
-            const parsed =
-                new URL(
-                    replyLink,
-                    CONFIG.baseUrl
-                );
-
-            const forumId =
-                Number(
-                    parsed.searchParams
-                        .get('f')
-                );
-
-
-            if (
-                forumId &&
-                forumId !== CONFIG.forumId
-            ) {
-
-                console.log(
-                    `Topic ${topic.id} ignoré : forum ${forumId}`
-                );
-
-                return null;
-
-            }
-
-        } catch {
-            // continue
-        }
-
-    }
-
 
     const postIds =
         extractPostIds($);
 
-
     if (!postIds.length) {
-
         console.warn(
             `Aucun PID trouvé dans le topic ${topic.id}.`
         );
@@ -688,19 +567,17 @@ async function inspectTopic(
         return {
             ...topic,
             postIds: [],
+            posts: [],
             lastPid: null,
             latestPost: null,
             finalUrl
         };
-
     }
-
 
     const lastPid =
         postIds[
             postIds.length - 1
         ];
-
 
     const posts =
         postIds.map(
@@ -711,13 +588,11 @@ async function inspectTopic(
                 )
         );
 
-
     const latestPost =
         posts.find(
             post =>
                 post.pid === lastPid
         );
-
 
     return {
         ...topic,
@@ -727,7 +602,6 @@ async function inspectTopic(
         latestPost,
         finalUrl
     };
-
 }
 
 
@@ -736,43 +610,379 @@ async function inspectTopic(
 ========================================================= */
 
 async function readState() {
-
     try {
-
         const raw =
             await fs.readFile(
                 CONFIG.stateFile,
                 'utf8'
             );
 
-        return JSON.parse(raw);
-
-    } catch {
+        const parsed =
+            JSON.parse(raw);
 
         return {
-            initialized: false,
-            topics: {}
+            initialized:
+                Boolean(
+                    parsed.initialized
+                ),
+
+            forums:
+                parsed.forums || {},
+
+            topics:
+                parsed.topics || {}
         };
 
+    } catch {
+        return {
+            initialized: false,
+            forums: {},
+            topics: {}
+        };
     }
-
 }
 
 
-async function writeState(
-    state
-) {
-
+async function writeState(state) {
     await fs.writeFile(
         CONFIG.stateFile,
+
         JSON.stringify(
             state,
             null,
             2
         ) + '\n',
+
         'utf8'
     );
+}
 
+
+/* =========================================================
+   SURVEILLER UN FORUM
+========================================================= */
+
+async function processForum(
+    forum,
+    state,
+    newState
+) {
+    console.log('');
+    console.log(
+        `=== Forum ${forum.id} : ${forum.name} ===`
+    );
+
+    const topics =
+        await getForumTopics(
+            forum
+        );
+
+    console.log(
+        `${topics.length} sujet(s) trouvé(s).`
+    );
+
+    if (
+        !newState.forums[
+            forum.id
+        ]
+    ) {
+        newState.forums[
+            forum.id
+        ] = {
+            topics: {}
+        };
+    }
+
+    const oldForum =
+        state.forums[
+            forum.id
+        ] || {
+            topics: {}
+        };
+
+    for (
+        const topic
+        of topics
+    ) {
+        try {
+            const inspected =
+                await inspectTopic(
+                    topic
+                );
+
+            if (
+                !inspected ||
+                !inspected.lastPid
+            ) {
+                continue;
+            }
+
+            const oldTopic =
+                oldForum.topics[
+                    topic.id
+                ];
+
+            /*
+             * Première exécution :
+             * on mémorise sans notifier.
+             */
+
+            if (
+                !state.initialized
+            ) {
+                newState
+                    .forums[
+                        forum.id
+                    ]
+                    .topics[
+                        topic.id
+                    ] = {
+                        title:
+                            inspected.title,
+
+                        lastPid:
+                            inspected.lastPid
+                    };
+
+                continue;
+            }
+
+            /*
+             * Nouveau sujet.
+             */
+
+            if (!oldTopic) {
+                console.log(
+                    `Nouveau sujet ${topic.id}`
+                );
+
+                await sendNewTopic(
+                    forum,
+                    inspected,
+                    inspected.latestPost
+                );
+
+                newState
+                    .forums[
+                        forum.id
+                    ]
+                    .topics[
+                        topic.id
+                    ] = {
+                        title:
+                            inspected.title,
+
+                        lastPid:
+                            inspected.lastPid
+                    };
+
+                continue;
+            }
+
+            /*
+             * Nouvelles réponses.
+             */
+
+            const oldPid =
+                Number(
+                    oldTopic.lastPid || 0
+                );
+
+            const newPosts =
+                inspected.posts.filter(
+                    post =>
+                        post.pid > oldPid
+                );
+
+            for (
+                const post
+                of newPosts
+            ) {
+                console.log(
+                    `Nouvelle réponse PID ${post.pid} dans topic ${topic.id}`
+                );
+
+                await sendNewReply(
+                    forum,
+                    inspected,
+                    post
+                );
+            }
+
+            /*
+             * Mise à jour état.
+             */
+
+            newState
+                .forums[
+                    forum.id
+                ]
+                .topics[
+                    topic.id
+                ] = {
+                    title:
+                        inspected.title,
+
+                    lastPid:
+                        inspected.lastPid
+                };
+
+        } catch (error) {
+            console.error(
+                `Erreur forum ${forum.id}, topic ${topic.id}:`,
+                error
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   SURVEILLER UN TOPIC PRÉCIS
+========================================================= */
+
+async function processSingleTopic(
+    destination,
+    state,
+    newState
+) {
+    console.log('');
+    console.log(
+        `=== Topic ${destination.id} : ${destination.name} ===`
+    );
+
+    const inspected =
+        await inspectTopic({
+            id: destination.id,
+            title: destination.name
+        });
+
+    if (
+        !inspected ||
+        !inspected.lastPid
+    ) {
+        return;
+    }
+
+    const oldTopic =
+        state.topics[
+            destination.id
+        ];
+
+    /*
+     * Première exécution :
+     * mémorise sans notifier.
+     */
+
+    if (
+        !state.initialized
+    ) {
+        newState.topics[
+            destination.id
+        ] = {
+            title:
+                inspected.title,
+
+            lastPid:
+                inspected.lastPid
+        };
+
+        return;
+    }
+
+    /*
+     * Si l'ancien état n'existe pas,
+     * on initialise simplement ce topic.
+     */
+
+    if (!oldTopic) {
+        newState.topics[
+            destination.id
+        ] = {
+            title:
+                inspected.title,
+
+            lastPid:
+                inspected.lastPid
+        };
+
+        return;
+    }
+
+    const oldPid =
+        Number(
+            oldTopic.lastPid || 0
+        );
+
+    const newPosts =
+        inspected.posts.filter(
+            post =>
+                post.pid > oldPid
+        );
+
+    for (
+        const post
+        of newPosts
+    ) {
+        console.log(
+            `Nouvelle réponse PID ${post.pid} dans topic ${destination.id}`
+        );
+
+        await sendNewReply(
+            destination,
+            inspected,
+            post
+        );
+    }
+
+    newState.topics[
+        destination.id
+    ] = {
+        title:
+            inspected.title,
+
+        lastPid:
+            inspected.lastPid
+    };
+}
+
+
+/* =========================================================
+   TEST DES WEBHOOKS
+========================================================= */
+
+async function runWebhookTests() {
+    console.log(
+        '=== Test des webhooks ==='
+    );
+
+    for (
+        const forum
+        of CONFIG.forums
+    ) {
+        console.log(
+            `Test webhook : ${forum.name}`
+        );
+
+        await sendTestNotification({
+            ...forum,
+            type: 'forum'
+        });
+    }
+
+    for (
+        const topic
+        of CONFIG.topics
+    ) {
+        console.log(
+            `Test webhook : ${topic.name}`
+        );
+
+        await sendTestNotification({
+            ...topic,
+            type: 'topic'
+        });
+    }
 }
 
 
@@ -781,247 +991,99 @@ async function writeState(
 ========================================================= */
 
 async function main() {
-
     console.log(
         '=== Stella Cinis Discord ==='
     );
 
-    console.log(
-        `Forum surveillé : ${CONFIG.forumId}`
-    );
-
+    validateWebhooks();
 
     /*
-     * Petit test Discord manuel.
+     * Si tu coches le test dans GitHub Actions,
+     * les 5 webhooks reçoivent chacun un message.
      */
 
     if (
         process.env.TEST_NOTIFICATION === '1'
     ) {
-
-        console.log(
-            'Envoi de la notification de test...'
-        );
-
-        await sendDiscord({
-
-            title:
-                '✅ Stella Cinis connecté',
-
-            description:
-                'Le webhook Discord fonctionne correctement.',
-
-            url:
-                CONFIG.forumUrl,
-
-            footer: {
-                text:
-                    'Surveillance du forum 23'
-            },
-
-            timestamp:
-                new Date().toISOString()
-
-        });
-
+        await runWebhookTests();
     }
-
 
     const state =
         await readState();
 
-
-    const topics =
-        await getForumTopics();
-
-
-    console.log(
-        `${topics.length} sujet(s) trouvé(s).`
-    );
-
-
     const newState = {
         initialized: true,
+
+        forums: {
+            ...state.forums
+        },
+
         topics: {
             ...state.topics
         }
     };
 
+    /*
+     * Surveiller les 4 forums.
+     */
 
     for (
-        const topic
-        of topics
+        const forum
+        of CONFIG.forums
     ) {
-
         try {
-
-            const inspected =
-                await inspectTopic(
-                    topic
-                );
-
-
-            if (
-                !inspected ||
-                !inspected.lastPid
-            ) {
-
-                continue;
-
-            }
-
-
-            const oldTopic =
-                state.topics[
-                    topic.id
-                ];
-
-
-            /*
-             * PREMIÈRE EXÉCUTION
-             *
-             * On enregistre tout sans envoyer
-             * 50 notifications Discord.
-             */
-
-            if (
-                !state.initialized
-            ) {
-
-                newState.topics[
-                    topic.id
-                ] = {
-
-                    title:
-                        inspected.title,
-
-                    lastPid:
-                        inspected.lastPid
-
-                };
-
-                continue;
-
-            }
-
-
-            /*
-             * NOUVEAU TOPIC
-             */
-
-            if (!oldTopic) {
-
-                console.log(
-                    `Nouveau topic : ${topic.id}`
-                );
-
-
-                await sendNewTopic(
-                    inspected,
-                    inspected.latestPost
-                );
-
-
-                newState.topics[
-                    topic.id
-                ] = {
-
-                    title:
-                        inspected.title,
-
-                    lastPid:
-                        inspected.lastPid
-
-                };
-
-                continue;
-
-            }
-
-
-            /*
-             * NOUVELLES RÉPONSES
-             */
-
-            const oldPid =
-                Number(
-                    oldTopic.lastPid || 0
-                );
-
-
-            const newPosts =
-                inspected.posts.filter(
-                    post =>
-                        post.pid > oldPid
-                );
-
-
-            for (
-                const post
-                of newPosts
-            ) {
-
-                console.log(
-                    `Nouvelle réponse PID ${post.pid} dans ${topic.id}`
-                );
-
-
-                await sendNewReply(
-                    inspected,
-                    post
-                );
-
-            }
-
-
-            /*
-             * Mise à jour du dernier PID.
-             */
-
-            newState.topics[
-                topic.id
-            ] = {
-
-                title:
-                    inspected.title,
-
-                lastPid:
-                    inspected.lastPid
-
-            };
-
-
-        } catch (error) {
-
-            console.error(
-                `Erreur topic ${topic.id}:`,
-                error
+            await processForum(
+                forum,
+                state,
+                newState
             );
 
+        } catch (error) {
+            console.error(
+                `Erreur forum ${forum.id}:`,
+                error
+            );
         }
-
     }
 
+    /*
+     * Surveiller les topics précis.
+     */
+
+    for (
+        const destination
+        of CONFIG.topics
+    ) {
+        try {
+            await processSingleTopic(
+                destination,
+                state,
+                newState
+            );
+
+        } catch (error) {
+            console.error(
+                `Erreur topic ${destination.id}:`,
+                error
+            );
+        }
+    }
 
     await writeState(
         newState
     );
 
-
+    console.log('');
     console.log(
         'Terminé.'
     );
-
 }
 
 
 main()
     .catch(
         error => {
-
             console.error(error);
-
             process.exit(1);
-
         }
     );
