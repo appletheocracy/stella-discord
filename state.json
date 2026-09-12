@@ -69,6 +69,10 @@
         "172": {
           "title": "Go to the first unread post",
           "lastPid": 746
+        },
+        "175": {
+          "title": "Hekkehard Friedrich • Eike",
+          "lastPid": 768
         }
       }
     },
@@ -132,7 +136,7 @@
         },
         "164": {
           "title": "Rory vester ~ Un petit cours de DSL",
-          "lastPid": 764
+          "lastPid": 770
         }
       }
     }
