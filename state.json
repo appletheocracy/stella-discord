@@ -9,7 +9,7 @@
         },
         "47": {
           "title": "Signaler un bug ou une coquille",
-          "lastPid": 115
+          "lastPid": 835
         },
         "157": {
           "title": "Questions sur les centres d'élevage",
@@ -132,7 +132,7 @@
         },
         "163": {
           "title": "Biologiste et Diplomate de la Fédération du Pacifique",
-          "lastPid": 827
+          "lastPid": 834
         },
         "164": {
           "title": "Go to the first unread post",
@@ -144,7 +144,7 @@
   "topics": {
     "47": {
       "title": "Bugs",
-      "lastPid": 115
+      "lastPid": 835
     }
   }
 }
